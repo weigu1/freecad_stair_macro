@@ -1,0 +1,161 @@
+# -*- coding: utf-8 -*-
+#
+# Macro based on half_turn_stairs macro from Berner
+# Runs with Freecad 0.20
+#
+# Author: weigu.lu based on work from Berner and Forum
+#         
+# This macro creates a stair from tupels of x,y,z. 
+# The 3-7 tupels (e.g. x1,y1,z1,x2,y2,z2,x3,y3,z3,x4,y4,z4) are used
+# to create a closed polyline (draftwire, dwire) for every step_height.
+# The polyline is extruded. The step height is calculated from
+# the floor height (step_height=total height/number of step_heights).
+#
+# A sample file with parameters is in stairs.csv. This file must
+# be in the macro folder. The value seperator is the tabulator.
+# One step per line. The first line is ignored.
+# The first cell contains the step number.
+#
+# Example for first stair:
+# 1 0.0 -240.0 0.0 0.0 0.0 0.0 1000.0 0.0 0.0 1000.0 -240.0 0.0
+
+from __future__ import unicode_literals
+from FreeCAD import Base
+import Draft, Part
+from PySide import QtGui
+import csv
+
+debug='n' # change this to 'y' if you want debug infos on the console
+DATASET_FILENAME = "stairs.csv"
+DATASET_DELIMITER = '\t'
+
+### FUNCTIONS ###
+def get_data_from_csv_file(csv_filename, delimiter):
+    """ Get data from CSV file """
+    data = []
+    with open(csv_filename, newline='') as csvfile:
+        reader = csv.reader(csvfile, delimiter=delimiter)   
+        for line in reader:
+            data.append(line)
+    return data        
+
+def get_data_from_gui():
+    """ Get data from GUI """
+    ok = True
+    total_height, ok1 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Floor height", "Floor heightin mm", 3000, 0, 4000, 4)
+    if debug == 'y': FreeCAD.Console.PrintMessage("total_height="+str(total_height) + " " + str(ok1) + "\n" )
+    if (not ok1):
+        return not ok,0,0,0
+    up_down, ok2 = QtGui.QInputDialog.getText(None, "up/down", "Stair up or down? u/d",text="u")
+    if debug == 'y': FreeCAD.Console.PrintMessage("up/down="+str(up_down) + " " + str(ok2) + "\n" )
+    if (not ok2):# or (up_down != 'u') or (up_down != 'd'):
+        return not ok,0,0,0
+    extrude_down, ok3 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Extrude down", "Extrude step down by mm", 0, 0, 1000, 4)
+    if debug == 'y': FreeCAD.Console.PrintMessage("extrude_doewn="+str(extrude_down) + " " + str(ok2) + "\n" )
+    if (not ok3):# or (up_down != 'u') or (up_down != 'd'):
+        return not ok,0,0,0
+    return ok, total_height, up_down, extrude_down
+
+def create_freecad_wires(data, step_nr, up_down, nr_of_steps, step_height):
+    """ Create FreeCAD wires from data """
+    data[step_nr].pop(0) #remove first value (step number)
+    num_words = len(data[step_nr])
+    num_tupel = num_words // 3
+    if debug == "y": App.Console.PrintMessage("Step nr: " + str(step_nr) + " Number of words: " + str(num_words) + " Number of tupels: " + str(num_tupel) + "\n")
+    if num_words == (num_tupel * 3) and num_words > 0:        
+        vector = [0,0,0,0,0,0,0]
+        for i in range(0, num_tupel):
+            if up_down == 'u':
+                data[step_nr][i*3+2] = (step_nr-1) * step_height
+            else:                
+                data[step_nr][i*3+2] = (nr_of_steps-(step_nr)) * step_height            
+            vector[i] = FreeCAD.Vector(float(data[step_nr][i*3]),float(data[step_nr][i*3+1]),float(data[step_nr][i*3+2]))
+            if debug == "y": App.Console.PrintMessage(str(vector) + "\n")
+        if num_tupel == 3:
+            Draft.makeWire([vector[0],vector[1],vector[2]],closed=True)
+        elif num_tupel == 4:
+             Draft.makeWire([vector[0],vector[1],vector[2],vector[3]],closed=True)
+        elif num_tupel == 5:
+            Draft.makeWire([vector[0],vector[1],vector[2],vector[3],vector[4]],closed=True)
+        elif num_tupel == 6:
+            Draft.makeWire([vector[0],vector[1],vector[2],vector[3],vector[4],vector[5]],closed=True)
+        elif num_tupel == 7:
+            Draft.makeWire([vector[0],vector[1],vector[2],vector[3],vector[4],vector[5],vector[6]],closed=True)
+        else:
+            App.Console.PrintMessage("more than 7 vertices per step (xy) not supported, expand the macro :)\n")
+    else:
+        App.Console.PrintMessage("Error in data file line nr " + str(step_nr)  + ". No multiple of 3 words\n")        
+
+def get_objnames():
+    """ List object names """
+    #doc = FreeCAD.ActiveDocument
+    objs = FreeCAD.ActiveDocument.Objects
+    names=''                               # list of objectnames
+    for obj in objs:
+        o_name = obj.Name                       # list the Name  of the object  (not modifiable)        
+        names=names+str(o_name)+" "
+    return names    
+
+def extrude_freecad_wires(active_document_name , names, wire_nr, step_height, extrude_down):
+    """ Extrude FreeCAD wires """
+    wire_name=str(names.split(" ")[wire_nr])
+    wire_nr = wire_name[4:]
+    if wire_nr == "":
+        extrude_name = "Step_1"
+    else:
+        extrude_name = "Step_" + str(int(wire_nr)+1)
+    if wire_name[0:4] == "Wire":
+        if debug == 'y':  App.Console.PrintMessage(str(wire_name) + " nr = " + str(wire_nr) + "\n")
+        f = FreeCAD.getDocument(active_document_name).addObject("Part::Extrusion",extrude_name)
+        f = App.getDocument(active_document_name).getObject(extrude_name)  
+        f.Base = App.getDocument(active_document_name).getObject(wire_name)  
+        f.DirMode = str("Custom")  
+        f.Dir = App.Vector(0.000000000000000, 0.000000000000000, 1.000000000000000)
+        f.DirLink = None
+        f.LengthFwd = step_height
+        f.LengthRev = extrude_down
+        f.Solid = True  
+        f.Reversed = False
+        f.Symmetric = False
+        f.TaperAngle = 0.000000000000000
+        f.TaperAngleRev = 0.000000000000000
+        
+def change_wire_object_labels():
+    """ Change labels of the objects """    
+    objs = FreeCAD.ActiveDocument.Objects
+    for obj in objs:
+        o_name = obj.Name                       # list the Name  of the object  (not modifiable)        
+        if str(o_name)[0:4] == "Wire":
+            if o_name[4:7] == "":                
+                o_name = "Wire000"            
+            obj.Label = "Step_wire_" + str(int(o_name[4:7])+1)        
+
+def macro_body():
+    ### INIT DATA AND GET DATA ###
+    p=FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Macro") # Get location of user macros
+    path = p.GetString("MacroPath")
+    dataset_filename = path + "/" + DATASET_FILENAME     # path and name of file.txt
+    App.Console.PrintMessage("\n'Stairs from spreadsheet' Macro\n") # Write to console 
+    active_document_name = App.ActiveDocument.Name       # name of active document
+    ok, total_height, up_down, extrude_down = get_data_from_gui()
+    if not ok: # stop macro if "Cancel" pressed in GUI
+        return
+    data = get_data_from_csv_file(dataset_filename, DATASET_DELIMITER)
+    ### MAIN ###
+    nr_of_steps = int(data[-1][0]) #get the first value of last line
+    step_height = float(total_height/nr_of_steps)  # Height of one step
+    if debug == "y": App.Console.PrintMessage("Nr_of_steps: " + str(nr_of_steps) + "  Stepheight: " + str(step_height) + "\n")
+    # create wires
+    for step_nr in range(1,nr_of_steps+1):    
+        create_freecad_wires(data, step_nr, up_down, nr_of_steps, step_height)
+    names = get_objnames()
+    if debug == "y": App.Console.PrintMessage("names="+str(names) +"\n")
+    # extrude
+    for wire_nr in range(0, nr_of_steps):
+        extrude_freecad_wires(active_document_name, names, wire_nr, step_height, extrude_down)
+    change_wire_object_labels()
+    FreeCAD.ActiveDocument.recompute()
+    App.Console.PrintMessage("done") # Write to console 
+
+if __name__ == '__main__':
+    macro_body()
