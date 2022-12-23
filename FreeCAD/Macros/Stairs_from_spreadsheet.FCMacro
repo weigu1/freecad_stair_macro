@@ -1,0 +1,248 @@
+# -*- coding: utf-8 -*-
+#
+# Stairs_from_spreadsheet.FCMacro
+#
+# Macro based on half_turn_stairs macro from Berner
+# Runs with Freecad 0.20
+#
+# Author: weigu.lu based on work from Berner and Forum
+#         
+# This macro creates a stair from tupels of x,y,z. 
+# The 3-7 tupels (e.g. x1,y1,z1,x2,y2,z2,x3,y3,z3,x4,y4,z4) are used
+# to create a closed polyline (draftwire, dwire) for every step_height.
+# The polyline is extruded. The step height is calculated from
+# the floor height (step_height=total height/number of step_heights).
+#
+# A sample file with parameters is in stairs.csv. This file must
+# be in the macro folder. The value seperator is the tabulator.
+# One step per line. The first line is ignored.
+# The first cell contains the step number.
+#
+# Example for first stair:
+# 1 0.0 -240.0 0.0 0.0 0.0 0.0 1000.0 0.0 0.0 1000.0 -240.0 0.0
+#  
+# A flooring with overhang can be created for stairs going up.
+# For stairs going down, the overhang is not implemented.
+
+from __future__ import unicode_literals
+from FreeCAD import Base
+from PySide import QtGui
+import Draft
+import csv
+import math 
+
+DATASET_FILENAME = "stairs.csv"
+DATASET_DELIMITER = '\t'
+
+### FUNCTIONS ###
+def get_data_from_csv_file(csv_filename, delimiter):
+    """ Get data from CSV file """
+    data = []
+    with open(csv_filename, newline='') as csvfile:
+        reader = csv.reader(csvfile, delimiter=delimiter)   
+        for line in reader:
+            data.append(line)
+    return data        
+
+def get_data_from_gui():
+    """ Get data from GUI """
+    ok = True
+    total_height, ok1 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Floor height", "Floor height in mm", 3000, 0, 4000, 4)
+    if (not ok1):
+        return not ok,0,0,0,0,0
+    up_down, ok2 = QtGui.QInputDialog.getText(None, "up/down", "Stair up or down? u/d",text="u")
+    if (not ok2):# or (up_down != 'u') or (up_down != 'd'):
+        return not ok,0,0,0,0,0
+    extrude_down, ok3 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Extrude down", "Extrude step down by mm", 150, 0, 1000, 4)
+    if (not ok3):
+        return not ok,0,0,0,0,0
+    flooring, ok4 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Flooring", "Flooring in mm", 20, 0, 1000, 4)
+    if (not ok4):
+        return not ok,0,0,0,0,0
+    else: 
+        flooring_overhang, ok5 = QtGui.QInputDialog.getDouble(QtGui.QWidget(), "Flooring_overhang", "Flooring overhang in mm", 0, 0, 1000, 4)
+        if (not ok5):
+            return not ok,0,0,0,0,0
+    return ok, total_height, up_down, extrude_down, flooring, flooring_overhang
+
+def create_wire(wire_name,vector_list, placement= False,closed=False,support=None,face=None):
+    """ Create a wire (polyline) from a vector list and give it a name ; from forum """
+    wire_object = FreeCAD.ActiveDocument.addObject("Part::Part2DObjectPython", wire_name)
+    Draft._Wire(wire_object)
+    wire_object.Points = vector_list
+    wire_object.Closed = closed
+    wire_object.Support = support
+    if face != None:
+        wire_object.MakeFace = face
+    if placement: wire_object.Placement = placement
+    if Gui:
+        Draft._ViewProviderWire(wire_object.ViewObject)
+        Draft.formatObject(wire_object)
+        Draft.select(wire_object)
+
+def extrude_wire(wire_name, extrude_name, extrude_fwd, extrude_rev):
+    """ Extrude a wire and choose a name for the extrusion """
+    active_document_name = App.ActiveDocument.Name
+    Extr_Obj = FreeCAD.ActiveDocument.addObject("Part::Extrusion",extrude_name)
+    Extr_Obj.Base = App.getDocument(active_document_name).getObject(wire_name)  
+    Extr_Obj.DirMode = str("Custom")  
+    Extr_Obj.Dir = App.Vector(0.000000000000000, 0.000000000000000, 1.000000000000000)
+    Extr_Obj.DirLink = None
+    Extr_Obj.LengthFwd = extrude_fwd
+    Extr_Obj.LengthRev = extrude_rev
+    Extr_Obj.Solid = True  
+    Extr_Obj.Reversed = False
+    Extr_Obj.Symmetric = False
+    Extr_Obj.TaperAngle = 0.000000000000000
+    Extr_Obj.TaperAngleRev = 0.000000000000000
+
+def create_step_wires(data, name, step_nr, up_down, nr_of_steps, step_height, offset):
+    """ Create FreeCAD wires from data """
+    num_words = len(data[step_nr])
+    num_tupel = num_words // 3
+    #App.Console.PrintMessage("Step nr: " + str(step_nr) + " Number of words: " + str(num_words) +
+    #                                      " Number of tupels: " + str(num_tupel) + "\n")
+    if num_words == (num_tupel * 3) and num_words > 0:        
+        vector = [0,0,0,0,0,0,0]
+        for i in range(0, num_tupel):
+            if up_down == 'u':
+                data[step_nr][i*3+2] = (step_nr-1) * step_height + offset
+            else:                
+                data[step_nr][i*3+2] = (nr_of_steps-(step_nr)) * step_height + offset
+            vector[i] = FreeCAD.Vector(float(data[step_nr][i*3]),float(data[step_nr][i*3+1]),float(data[step_nr][i*3+2]))
+            #App.Console.PrintMessage(str(vector) + "\n")
+        if num_tupel == 3:
+            vectorlist = [vector[0],vector[1],vector[2]]
+        elif num_tupel == 4:
+            vectorlist = [vector[0],vector[1],vector[2],vector[3]]
+        elif num_tupel == 5:
+            vectorlist = [vector[0],vector[1],vector[2],vector[3],vector[4]]
+        elif num_tupel == 6:
+            vectorlist = [vector[0],vector[1],vector[2],vector[3],vector[4],vector[5]]
+        elif num_tupel == 7:
+            vectorlist = [vector[0],vector[1],vector[2],vector[3],vector[4],vector[5],vector[6]]
+        else:
+            App.Console.PrintMessage("more than 7 vertices per step (xy) not supported, expand the macro :)\n")    
+    else:
+        App.Console.PrintMessage("Error in data file line nr " + str(step_nr)  + ". No multiple of 3 words\n")
+    wire_name = name + str(step_nr)
+    create_wire(wire_name, vectorlist, closed=True)
+
+def extrude_step_wires(step_nr, step_height, extrude_down):    
+    """ Extrude step wires """
+    wire_name = "Step_wire_" + str(step_nr)
+    extrude_name = "Step_" + str(step_nr)
+    extrude_wire(wire_name, extrude_name, step_height, extrude_down)
+
+def extrude_flooring_wires(step_nr, flooring):    
+    """ Extrude flooring wires """
+    wire_name = "Flooring_wire_" + str(step_nr)
+    extrude_name = "Flooring_" + str(step_nr)
+    extrude_wire(wire_name, extrude_name, flooring, 0)
+
+def create_flooring_data(data, nr_of_steps, step_nr, up_down, flooring_overhang):
+    """ Create flooring data and flooring overhang (only up) """
+    #App.Console.PrintMessage(str(data[step_nr]) + "\n") # Write to console 
+    x1_next = 0, 
+    x2_next = 0
+    y1_next = 0
+    y2_next = 0
+    x1_prev = 0
+    x2_prev = 0
+    y1_prev = 0
+    y2_prev = 0
+    x1 = float(data[step_nr][0])
+    y1 = float(data[step_nr][1])
+    x2 = float(data[step_nr][3])
+    y2 = float(data[step_nr][4])
+    if step_nr != nr_of_steps: # last step has no next step
+        x1_next = float(data[step_nr+1][0])
+        y1_next = float(data[step_nr+1][1])
+        x2_next = float(data[step_nr+1][3])
+        y2_next = float(data[step_nr+1][4])
+    if step_nr != 1: # first step has no prev step
+        x1_prev = float(data[step_nr-1][0])
+        y1_prev = float(data[step_nr-1][1])
+        x2_prev = float(data[step_nr-1][3])
+        y2_prev = float(data[step_nr-1][4])
+    angle = math.atan2((y2-y1),(x2-x1)) # for degrees: *180/math.pi
+    App.Console.PrintMessage("Step: " + str(step_nr) + " Angle: " +  str(angle) + "\n" ) # Write to console 
+    cornerflag = 0  # we get a problem a step point equals a corner point
+    if x1 == x1_next: # vertical
+         App.Console.PrintMessage("Here1" + "\n" ) # Write to console 
+         cornerflag = cornerflag + 1
+         data[step_nr][1] = y1-(flooring_overhang/math.cos(angle))
+    if x2 == x2_next: # vertical
+        App.Console.PrintMessage("Here2" + "\n" ) # Write to console 
+        cornerflag = cornerflag + 1
+        data[step_nr][4] = y2-(flooring_overhang/math.cos(angle))
+    if y1 == y1_next: # horizontal
+        App.Console.PrintMessage("Here3" + "\n" ) # Write to console 
+        cornerflag = cornerflag + 1
+        data[step_nr][0] = x1+(flooring_overhang/math.sin(angle))
+    if y2 == y2_next: # horizontal
+        data[step_nr][3] = x2+(flooring_overhang/math.sin(angle))
+        cornerflag = cornerflag + 1
+        App.Console.PrintMessage("Here4" + "\n" ) # Write to console
+    if cornerflag < 2: 
+        if x1 == x1_prev and  x1 != x1_next: 
+            App.Console.PrintMessage("Here5" + "\n" ) # Write to console 
+            data[step_nr][1] = y1-(flooring_overhang/math.cos(angle))
+        if x2 == x2_prev and  x2 != x2_next: 
+            App.Console.PrintMessage("Here6" + "\n" ) # Write to console 
+            data[step_nr][4] = y2-(flooring_overhang/math.cos(angle))
+        if y1 == y1_prev and  y1 != y1_next: 
+            App.Console.PrintMessage("Here7" + "\n" ) # Write to console 
+            data[step_nr][0] = x1+(flooring_overhang/math.sin(angle))
+        if y2 == y2_prev and  y2 != y2_next: 
+            data[step_nr][3] = x2+(flooring_overhang/math.sin(angle))
+            App.Console.PrintMessage("Here8" + "\n" ) # Write to console
+    App.Console.PrintMessage(str(data[step_nr]) + "\n\n") # Write to console 
+    return data
+
+def add_to_group(group, nr_of_steps, name):
+    for step_nr in range(1, nr_of_steps+1):
+        label_name = name + str(step_nr)    
+        group.addObjects(App.ActiveDocument.getObjectsByLabel(label_name))
+
+def macro_body():
+    group = FreeCAD.ActiveDocument.addObject("App::DocumentObjectGroup", "Stair")
+    ### INIT DATA AND GET DATA ###
+    p=FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Macro") # Get location of user macros
+    path = p.GetString("MacroPath")
+    dataset_filename = path + "/" + DATASET_FILENAME     # path and name of file.txt
+    FreeCAD.Console.PrintMessage("\n'Stairs from spreadsheet' Macro\n") # Write to console 
+    ok, total_height, up_down, extrude_down, flooring, flooring_overhang = get_data_from_gui()
+    if not ok: # stop macro if "Cancel" pressed in GUI
+        return
+    data = get_data_from_csv_file(dataset_filename, DATASET_DELIMITER)
+    ### MAIN ###
+    nr_of_steps = int(data[-1][0]) #get the first value of last line
+    if flooring:
+        total_height = total_height-flooring
+    step_height = float(total_height/nr_of_steps)  # Height of one step
+    #App.Console.PrintMessage("Nr_of_steps: " + str(nr_of_steps) + "  Stepheight: " + str(step_height) + "\n")
+    # create wires
+    for step_nr in range(1,nr_of_steps+1):    
+        data[step_nr].pop(0) #remove first value (step number)
+        create_step_wires(data, "Step_wire_", step_nr, up_down, nr_of_steps, step_height,0)
+    # extrude
+    for step_nr in range(1, nr_of_steps+1):
+       extrude_step_wires(step_nr, step_height, extrude_down)
+    add_to_group(group, nr_of_steps, "Step_")
+    # flooring 
+    if flooring:
+        for step_nr in range(1, nr_of_steps+1):
+            if up_down == 'd': # flooring with overhang works only for stairs going up!
+                data = create_flooring_data(data,  nr_of_steps, step_nr, up_down, 0)            
+            else:
+                data = create_flooring_data(data,  nr_of_steps, step_nr, up_down, flooring_overhang)            
+            create_step_wires(data, "Flooring_wire_", step_nr, up_down, nr_of_steps, step_height, step_height)
+        for step_nr in range(1, nr_of_steps+1):
+            extrude_flooring_wires(step_nr, flooring)      
+        add_to_group(group, nr_of_steps, "Flooring_")    
+    FreeCAD.ActiveDocument.recompute()
+    App.Console.PrintMessage("done") # Write to console 
+    
+if __name__ == '__main__':
+    macro_body()
