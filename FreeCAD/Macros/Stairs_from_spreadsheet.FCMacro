@@ -23,6 +23,9 @@
 #  
 # A flooring with overhang can be created for stairs going up.
 # For stairs going down, the overhang is not implemented.
+# With ARCH = True an ARCH component called is created
+# ARCH = False creates a group of parts 
+# A displacement to the original coordinates can be added
 
 from __future__ import unicode_literals
 import FreeCAD, Arch, Draft, Part
